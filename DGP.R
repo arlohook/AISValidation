@@ -24,8 +24,8 @@ Xhat = apply(Xchat, 2, function(x){x+Xmu})
 matplot(Xhat, type = 'l')
 
 # make trial reference
-ref_df = data.frame(Participant = rep(1:10, each = 10),
-                    Trial = 1:100)
+ref_df = data.frame(Participant = factor(rep(1:20, each = 5)),
+                    Trial = factor(1:100))
 
 # make participant specific deviations
 sigma = 1
@@ -38,7 +38,7 @@ C <- sigma^2 * exp(-D2 / (2 * ell^2))
 
 fields::image.plot(C)
 
-jdif = t(rmvnorm(10, sigma = C))
+jdif = t(rmvnorm(20, sigma = C))
 
 matplot(jdif, type = 'l')
 
@@ -47,7 +47,7 @@ alpha = 3*cos(2.2*t*pi+15)
 plot(alpha)+
   abline(h = 0)
 
-jdmat = do.call(cbind, lapply(rep(1:10, each = 10), function(j){jdif[,j]}))
+jdmat = do.call(cbind, lapply(rep(1:20, each = 5), function(j){jdif[,j]}))
 
 
 # make smooth noise
