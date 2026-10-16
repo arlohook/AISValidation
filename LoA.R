@@ -65,6 +65,16 @@ ggplot(mod_data)+
         plot.title = element_text(face = "bold"),
         axis.title.y = element_text(face = "bold"))
 
+# look at between participant variance
+
+bs_sig = VarCorr(mod)
+print(bs_sig)
+
+# look at confidence interval of bias
+
+CI = confint(mod, level = 0.95, method = "boot", nsim = 1000)
+cat(paste0("Bias = ", round(bias, 2), ", 95% CI = [",round(CI[3,1],2),",",round(CI[3,2],2), "]"))
+
 #--------------------------------------------------------------------------------
 # 1. Functional Limit of Agreement
 #--------------------------------------------------------------------------------
@@ -76,7 +86,7 @@ mod_data$Sys2 = t(data$System2)
 # calculate difference
 mod_data$funDif = t(data$System1)-t(data$System2)
 
-# estimate the functional random effects model
+# estimate the functional random effects model to get the error variance
 t = seq(0,1,0.01)
 mod2 = pffr(funDif ~ 1 + s(Participant, k = 20, bs = 're'), data = mod_data,
             bs.int = list(k = 20 , bs = 'ps', m = 2), yind = t, algorithm = 'bam')
@@ -90,41 +100,76 @@ bias$value = bias$value + coef(mod2)$`pterms`[1]
 # extract the residuals
 resids = matrix(mod2$residuals, 101, 100)
 
-# estimate pointwise error variance via fpca
+# estimate error variance for FLoA
 sigEt = apply(resids, 1, sd)
 
-# get simultaneous confidence bands (Degras 2017)
-set.seed(2026)
-boot.list = level.boot.list(df = mod_data, id = "Participant", B = 1000)
-
-# note: this step takes time and RAM
-fits = fit.boots(model = mod2, boot.list = boot.list, ncores = 10)
-gc()
-CMA = estimate.CMA(boot.grid = fits[[1]]$boots, est = bias$value)
-
-cor.fac = CMA$adj.fac[1]
 
 
 # revaluate at same points as the bias
 sigEt = spline(x = t, y = sigEt, xout = bias$yindex.vec)$y
 
-bias = bias %>% mutate(LoA_upper = value + cor.fac*sigEt, LoA_lower = value - cor.fac*sigEt,
-                       LoApwL = value - 1.96*sigEt, LoApwU = value + 1.96*sigEt, )
+bias = bias %>% mutate(LoApwL = value - 1.96*sigEt, LoApwU = value + 1.96*sigEt)
 
 # rearrange raw difference data for plotting
 diff = data.frame(melt(data$System1-data$System2)) %>% mutate(Participant = factor(rep(mod_data$Participant, each = 101)),
                                                               Trial = factor(rep(1:100, each = 101)),
                                                               t = rep(t, 100)) %>% select(-c(X1, X2))
-
 ggplot()+
   geom_line(data = diff, aes(x = t, y = value, group = Trial, colour = Participant), alpha = 0.3)+
-  geom_ribbon(data = bias, aes(x = yindex.vec, ymin = LoA_lower, ymax = LoA_upper), fill = "lightgrey", alpha = 0.8)+
-  geom_ribbon(data = bias, aes(x = yindex.vec, ymin = LoApwL, ymax = LoApwU), colour = "darkgrey", alpha = 0, lty = 2)+
+  geom_ribbon(data = bias, aes(x = yindex.vec, ymin = LoApwL, ymax = LoApwU), fill = "lightgrey", alpha = 0.8)+
   geom_line(data = bias, aes(x = yindex.vec, y = value), colour = "red")+
   geom_hline(yintercept = 0, lty = 2)+
   labs(x = "% Gate Cyle", y = "Degrees Difference (System 1 - System 2)",
        title = "Knee Flexion - Limits of Agreement",
-       subtitle = "Bias (red line), Point wise LoA (dashed grey), Simultaneous LoA (shaded grey)")+
+       subtitle = "Bias (red line), LoA (grey)")+
+  theme_light()+
+  theme(legend.position = 'none',
+        plot.title = element_text(face = "bold"),
+        axis.title.y = element_text(face = "bold"),
+        axis.title.x = element_text(face = "bold"))
+
+# look at participant bias variance
+
+C = as.matrix(coef(mod2)$smterms[[2]]$coef %>%
+              select(-c(se)) %>%
+              pivot_wider(names_from = Participant, values_from = value)
+              %>% select(-c(yindex.vec)))
+
+num_par = ncol(C)
+
+C = apply(C, 2, function(k){k-rowMeans(C)})
+
+Chat = C%*%t(C)*(1/(num_par-1))
+
+pvar = diag(Chat)
+
+ggplot(data.frame(t = seq(0,1, length = ncol(Chat)), variance = diag(Chat)))+
+  geom_line(aes(x = t, y = variance))+
+  theme_light()+
+  labs(x = "% Gate Cycle", y = "Variance", title = "Variance of Participant Specific Bias")
+
+
+# get simultaneous confidence bands for the bias (Degras 2017)
+set.seed(2026)
+boot.list = level.boot.list(df = mod_data, id = "Participant", B = 1000)
+
+# note: this step takes time and RAM
+
+# we use a non random intercept model since our shuffling at the participant level accounts for the within participant correlation
+mod3 =  pffr(funDif ~ 1, data = mod_data,
+             bs.int = list(k = 20 , bs = 'ps', m = 2), yind = t, algorithm = 'bam')
+
+fits = fit.boots(model = mod3, boot.list = boot.list, ncores = 10)
+gc()
+CMA = estimate.CMA(boot.grid = fits[[1]]$boots, est = bias$value)
+
+ggplot(CMA)+
+  geom_ribbon(aes(x = ind, ymin = LCI, ymax = UCI), fill = "lightgrey", alpha = 0.8)+
+  geom_line(aes(x = ind, y = est), colour = "red")+
+  geom_hline(yintercept = 0, lty = 2)+
+  labs(x = "% Gate Cyle", y = "Degrees Difference (System 1 - System 2)",
+       title = "Knee Flexion - Bias",
+       subtitle = "Bias (red line), 95% CI (grey)")+
   theme_light()+
   theme(legend.position = 'none',
         plot.title = element_text(face = "bold"),
